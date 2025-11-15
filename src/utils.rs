@@ -1,11 +1,11 @@
 #[derive(Clone)]
 pub struct MotorData {
-    pub target: f64,
-    pub actual: f64,
-    pub enc: u16,
-    pub p: f64,
-    pub i: f64,
-    pub d: f64,
+    pub target: f32,
+    pub actual: f32,
+    pub enc: u32,
+    pub p: f32,
+    pub i: f32,
+    pub d: f32,
     pub pwr: u16,
 }
 

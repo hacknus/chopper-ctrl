@@ -22,6 +22,7 @@ use cortex_m_rt::exception;
 use cortex_m_rt::{entry, ExceptionFrame};
 use embedded_hal::digital::v2::OutputPin;
 use freertos_rust::*;
+use num_traits::{ToPrimitive, WrappingSub};
 use panic_halt as _;
 use stm32f4xx_hal::otg_fs::USB;
 use stm32f4xx_hal::pac::CorePeripherals;
@@ -45,9 +46,17 @@ static GLOBAL: FreeRtosAllocator = FreeRtosAllocator;
 
 // Global counter
 static ENC_COUNT: AtomicU32 = AtomicU32::new(0);
+static ENC_DELTA_T: AtomicU32 = AtomicU32::new(0);
+static ENC_INTERRUPT_LAST_CALL: AtomicU32 = AtomicU32::new(0);
+
+const REV_PER_SECOND: f32 = 100.0; // 100 pulses per revolution
 
 fn cycles_to_us(cycles: u32, sysclk_hz: u32) -> u64 {
     (cycles as u64).saturating_mul(1_000_000u64) / (sysclk_hz as u64)
+}
+
+fn cycles_to_Hz(cycles: u32, sysclk_hz: u32) -> f32 {
+    (cycles as f32) / (sysclk_hz as f32)
 }
 
 #[entry]
@@ -162,79 +171,74 @@ fn main() -> ! {
         .priority(TaskPriority(3))
         .start(move || {
             let mut duty: u16 = 0;
-
             let mut pid = pid::PID::new();
 
-            // read the 32-bit cycle counter
-            let mut last_enc_value_call = DWT::cycle_count();
-            let mut last_enc_value = 0;
-
-            // convert wrapping difference to microseconds (pass your actual sysclk in Hz)
-            let sysclk_hz: u32 = 96_000_000; // set to your system clock
-
+            let sysclk_hz: u32 = 96_000_000;
             let mut velocity_mav = Mav::new();
 
+            // Track pulses over 50ms windows
+            let mut last_measurement_time = DWT::cycle_count();
+            let mut last_enc_count = 0u32;
+            let measurement_window_us = 50_000u64; // 50ms
+
             loop {
-                // update PID
-                let enc_value = ENC_COUNT.load(Ordering::Relaxed) as u16;
-                let elapsed_cycles = DWT::cycle_count().wrapping_sub(last_enc_value_call);
+                let now_cycles = DWT::cycle_count();
+                let elapsed_cycles = now_cycles.wrapping_sub(last_measurement_time);
                 let elapsed_us = cycles_to_us(elapsed_cycles, sysclk_hz);
 
-                if enc_value as u32 != last_enc_value {
-                    let actual_speed = (enc_value as u32).saturating_sub(last_enc_value) as f64
-                        / (100.0 * elapsed_us as f64 / 1000.0 / 1000.0);
+                // Only calculate speed every 50ms
+                if elapsed_us >= measurement_window_us {
+                    let current_enc_count = ENC_COUNT.load(Ordering::Relaxed);
+                    let pulse_count = current_enc_count.wrapping_sub(last_enc_count);
+
+                    // Speed = (pulses / 100 pulses_per_rev) / (time_in_seconds)
+                    let actual_speed =
+                        (pulse_count as f32 / REV_PER_SECOND) / (elapsed_us as f32 / 1_000_000.0);
+
                     velocity_mav.push(Some(actual_speed));
-                    last_enc_value = enc_value as u32;
-                    last_enc_value_call = DWT::cycle_count();
-                }
 
-                let now = FreeRtosUtils::get_tick_count() as u64;
+                    last_enc_count = current_enc_count;
+                    last_measurement_time = now_cycles;
 
-                if now > pid.prev_time + 10 {
-                    let actual_speed = velocity_mav.evaluate().unwrap_or(0.0);
-                    if pid.enabled {
-                        let pid_output = pid.get_value(actual_speed, now);
-                        duty = (pid_output.abs().clamp(0.0, 1.0) * pwm_max_duty as f64) as u16;
-                    } else {
-                        duty = 0;
-                    }
+                    let now = FreeRtosUtils::get_tick_count() as u64;
 
-                    match motor_data_container_motor.lock(Duration::ms(1)) {
-                        Ok(mut motor_data_temp) => {
-                            motor_data_temp.target = pid.target;
-                            motor_data_temp.actual = actual_speed;
-                            motor_data_temp.pwr = duty;
-                            motor_data_temp.p = pid.p;
-                            motor_data_temp.i = pid.i;
-                            motor_data_temp.d = pid.d;
-                            motor_data_temp.enc = enc_value;
+                    if now > pid.prev_time + 5 {
+                        let averaged_speed = velocity_mav.evaluate().unwrap_or(0.0);
+                        if pid.enabled {
+                            let pid_output = pid.get_value(averaged_speed, now);
+                            duty = (pid_output.clamp(0.0, 1.0) * pwm_max_duty as f32) as u16;
+                        } else {
+                            duty = 0;
                         }
-                        Err(_) => {}
-                    }
-                }
 
-                motor_pwm.set_duty(Channel::C1, duty);
+                        match motor_data_container_motor.lock(Duration::ms(1)) {
+                            Ok(mut motor_data_temp) => {
+                                motor_data_temp.target = pid.target;
+                                motor_data_temp.actual = averaged_speed;
+                                motor_data_temp.pwr = duty;
+                                motor_data_temp.p = pid.p;
+                                motor_data_temp.i = pid.i;
+                                motor_data_temp.d = pid.d;
+                                motor_data_temp.enc = current_enc_count;
+                            }
+                            Err(_) => {}
+                        }
+                    }
+
+                    motor_pwm.set_duty(Channel::C1, duty);
+                }
 
                 if let Ok(cmd) = motor_command_queue_motor.receive(Duration::ms(1)) {
                     match cmd {
-                        Commands::SetSpeed(speed) => {
-                            pid.target = speed as f64;
-                        }
-                        Commands::SetKp(kp) => {
-                            pid.kp = kp as f64;
-                        }
-                        Commands::SetKi(ki) => {
-                            pid.ki = ki as f64;
-                        }
-                        Commands::SetKd(kd) => {
-                            pid.kd = kd as f64;
-                        }
-                        Commands::Start => {
-                            pid.enabled = true;
-                        }
+                        Commands::SetSpeed(speed) => pid.target = speed,
+                        Commands::SetKp(kp) => pid.kp = kp,
+                        Commands::SetKi(ki) => pid.ki = ki,
+                        Commands::SetKd(kd) => pid.kd = kd,
+                        Commands::Start => pid.enabled = true,
+                        Commands::Reset => pid.i = 0.0,
                         Commands::Stop => {
                             pid.enabled = false;
-                            motor_pwm.set_duty(Channel::C4, 0);
+                            motor_pwm.set_duty(Channel::C1, 0);
                         }
                     }
                 }
@@ -248,7 +252,7 @@ fn main() -> ! {
         .priority(TaskPriority(3))
         .start(move || {
             let mut hk = true;
-            let mut hk_period = 1000.0;
+            let mut hk_period = 100.0;
             let mut motor = MotorData::default();
 
             loop {
@@ -301,13 +305,11 @@ fn main() -> ! {
 
 #[interrupt]
 fn EXTI9_5() {
-    // Clear the interrupt flag for PB6 (EXTI6)
     unsafe {
         let exti = &(*pac::EXTI::ptr());
         exti.pr.write(|w| w.pr6().set_bit());
     }
 
-    // Increment counter
     ENC_COUNT.fetch_add(1, Ordering::Relaxed);
 }
 

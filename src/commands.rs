@@ -34,6 +34,7 @@ pub enum Commands {
     SetKd(f32),
     Start,
     Stop,
+    Reset,
 }
 
 const CMD_QUEUE_TIMEOUT: u32 = 5;
@@ -101,6 +102,10 @@ pub fn extract_command(
             motor_command_queue
                 .send(Commands::Stop, Duration::ms(CMD_QUEUE_TIMEOUT))
                 .unwrap();
+        } else if cmd.contains("[CMD] reset") {
+            motor_command_queue
+                .send(Commands::Reset, Duration::ms(CMD_QUEUE_TIMEOUT))
+                .unwrap();
         } else if cmd.contains("[CMD] disableHK") {
             *hk = false;
             cmd_ok();
@@ -140,12 +145,12 @@ pub fn cmd_ok() {
 }
 
 pub fn send_housekeeping(
-    enc_pos: u16,
-    target: f64,
-    speed: f64,
-    p: f64,
-    i: f64,
-    d: f64,
+    enc_pos: u32,
+    target: f32,
+    speed: f32,
+    p: f32,
+    i: f32,
+    d: f32,
     pwr: u16,
     msg: &str,
 ) {
