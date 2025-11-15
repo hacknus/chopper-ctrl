@@ -2,7 +2,7 @@
 runner = [
     "sh",
     "-c",
-    "arm-none-eabi-objcopy -O binary $0 firmware.bin && dfu-util -a 0 -s 0x08000000 -D firmware.bin -R"
+    "python scripts/enter_bootloader.py && sleep 1 && arm-none-eabi-objcopy -O binary $0 firmware.bin && dfu-util -a 0 -s 0x08000000:leave -D firmware.bin"
 ]
 
 rustflags = [

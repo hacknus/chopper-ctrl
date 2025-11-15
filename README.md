@@ -41,7 +41,10 @@ The project is configured to build for `thumbv7em-none-eabihf` (see `.cargo/conf
 
 ## Flashing
 
-- Reset the board into DFU mode (by setting BOOT0 high and resetting).
+- If python is installed (and pyserial), the board will automatically be reset into DFU mode when the cargo runner is
+  executed.
+  If not, you will need to manually put the board into DFU mode:
+    - Reset the board into DFU mode (by setting BOOT0 high and resetting).
 - The repository includes a cargo `runner` that converts the ELF to a binary and calls dfu-util.
 - Run:
     ```shell

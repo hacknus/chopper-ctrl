@@ -15,18 +15,16 @@ use crate::utils::MotorData;
 use alloc::sync::Arc;
 use arrform::{arrform, ArrForm};
 use core::alloc::Layout;
+use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering};
 use cortex_m::asm;
 use cortex_m::peripheral::DWT;
 use cortex_m_rt::exception;
 use cortex_m_rt::{entry, ExceptionFrame};
-use embedded_hal::digital::v2::OutputPin;
 use freertos_rust::*;
-use num_traits::{ToPrimitive, WrappingSub};
 use panic_halt as _;
 use stm32f4xx_hal::otg_fs::USB;
 use stm32f4xx_hal::pac::CorePeripherals;
-use stm32f4xx_hal::qei::Qei;
 use stm32f4xx_hal::timer::{Channel, Channel1};
 use stm32f4xx_hal::{
     interrupt,
@@ -46,8 +44,6 @@ static GLOBAL: FreeRtosAllocator = FreeRtosAllocator;
 
 // Global counter
 static ENC_COUNT: AtomicU32 = AtomicU32::new(0);
-static ENC_DELTA_T: AtomicU32 = AtomicU32::new(0);
-static ENC_INTERRUPT_LAST_CALL: AtomicU32 = AtomicU32::new(0);
 
 const REV_PER_SECOND: f32 = 100.0; // 100 pulses per revolution
 
@@ -55,8 +51,58 @@ fn cycles_to_us(cycles: u32, sysclk_hz: u32) -> u64 {
     (cycles as u64).saturating_mul(1_000_000u64) / (sysclk_hz as u64)
 }
 
-fn cycles_to_Hz(cycles: u32, sysclk_hz: u32) -> f32 {
-    (cycles as f32) / (sysclk_hz as f32)
+use cortex_m_rt::pre_init;
+
+const BOOTLOADER_MAGIC: u32 = 0xDEADBEEF;
+const MAGIC_ADDR: *mut u32 = 0x2001_FFFC as *mut u32; // End of 128KB SRAM
+
+pub fn jump_to_bootloader_via_reset() -> ! {
+    unsafe {
+        ptr::write_volatile(MAGIC_ADDR, BOOTLOADER_MAGIC);
+        cortex_m::peripheral::SCB::sys_reset();
+    }
+}
+
+#[pre_init]
+unsafe fn check_bootloader_flag() {
+    use cortex_m::peripheral::SCB;
+
+    // this is required so the application automatically starts after flashing via DFU
+    const FLASH_BASE: u32 = 0x08000000;
+
+    // Only set if not already set (avoid overriding bootloader setup)
+    let scb = &*SCB::ptr();
+    if scb.vtor.read() != FLASH_BASE {
+        scb.vtor.write(FLASH_BASE);
+    }
+
+    // Check magic value at start of reset handler
+    if ptr::read_volatile(MAGIC_ADDR) == BOOTLOADER_MAGIC {
+        // Clear magic value (like the assembly does)
+        ptr::write_volatile(MAGIC_ADDR, 0);
+
+        // Enable SYSCFG clock (RCC_APB2ENR = 0x40023844)
+        ptr::write_volatile(0x40023844 as *mut u32, 0x00004000);
+
+        // Map ROM at zero (SYSCFG_MEMRMP = 0x40013800)
+        ptr::write_volatile(0x40013800 as *mut u32, 0x00000001);
+
+        // Load bootloader stack pointer and reset vector
+        let bootloader_base = 0x1FFF0000u32;
+        let sp = ptr::read_volatile(bootloader_base as *const u32);
+        let pc = ptr::read_volatile((bootloader_base + 4) as *const u32);
+
+        // Use the transmute approach - it should work after memory remap
+        cortex_m::asm::dsb();
+        cortex_m::asm::isb();
+
+        // Set stack pointer manually using register write
+        core::arch::asm!("msr msp, {}", in(reg) sp);
+
+        // Jump to bootloader
+        let bootloader_entry: extern "C" fn() -> ! = core::mem::transmute(pc);
+        bootloader_entry();
+    }
 }
 
 #[entry]

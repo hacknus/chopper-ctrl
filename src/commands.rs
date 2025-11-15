@@ -3,7 +3,7 @@ use alloc::sync::Arc;
 use arrform::{arrform, ArrForm};
 use freertos_rust::*;
 
-use crate::usb_println;
+use crate::{jump_to_bootloader_via_reset, usb_println};
 
 fn extract_value(cmd: &str) -> Option<f32> {
     let mut start_index = 0;
@@ -106,6 +106,10 @@ pub fn extract_command(
             motor_command_queue
                 .send(Commands::Reset, Duration::ms(CMD_QUEUE_TIMEOUT))
                 .unwrap();
+        } else if cmd.contains("[CMD] enter bootloader") {
+            usb_println(arrform!(64, "[ACK] rebooting...").as_str());
+            freertos_rust::CurrentTask::delay(Duration::ms(100)); // wait to send the ACK
+            jump_to_bootloader_via_reset();
         } else if cmd.contains("[CMD] disableHK") {
             *hk = false;
             cmd_ok();
@@ -129,10 +133,12 @@ pub fn extract_command(
                     usb_println(arrform!(64, "[ACK] error = no value found").as_str());
                 }
             }
-        } else {
-            // invalid command
-            cmd_failed();
+        } else if cmd.to_lowercase().contains("ping") {
+            usb_println(arrform!(64, "Pong").as_str());
         }
+    } else {
+        // invalid command
+        cmd_failed();
     }
 }
 
