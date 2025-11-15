@@ -32,7 +32,10 @@ Code could easily be extended for directional control (H-bridge) and quadrature 
 From the project root:
 
 - Release build:
+
+  ```shell
   cargo build --release
+  ```
 
 The project is configured to build for `thumbv7em-none-eabihf` (see `.cargo/config.toml`).
 
@@ -41,8 +44,11 @@ The project is configured to build for `thumbv7em-none-eabihf` (see `.cargo/conf
 - Reset the board into DFU mode (by setting BOOT0 high and resetting).
 - The repository includes a cargo `runner` that converts the ELF to a binary and calls dfu-util.
 - Run:
-  cargo run --release
-  This will produce `firmware.bin` and flash it via dfu-util as configured.
+    ```shell
+      cargo run --release
+    ```
+
+This will produce `firmware.bin` and flash it via dfu-util as configured.
 
 ## Usage / USB command interface
 
