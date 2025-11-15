@@ -52,7 +52,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "chopper"
+name = "chopper-ctrl"
 version = "0.1.0"
 dependencies = [
  "arrform",
