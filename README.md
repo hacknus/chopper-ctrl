@@ -57,21 +57,23 @@ This will produce `firmware.bin` and flash it via dfu-util as configured.
 
 The firmware exposes a simple ASCII-based USB command interface. Commands and housekeeping messages use these prefixes:
 
-- Commands are sent as lines containing `[CMD]`.
-  Examples:
-    - Set speed: `[CMD] setSpeed=1.5`
+- Commands are sent as lines containing `[CMD]` and terminated with `\r\n`.
+    - Set speed: `[CMD] setSpeed=1.5\r\n`
     - Set PID gains:
-        - `[CMD] setKp=0.9`
-        - `[CMD] setKi=0.001`
-        - `[CMD] setKd=100.0`
+        - `[CMD] setKp=0.9\r\n`
+        - `[CMD] setKi=0.001\r\n`
+        - `[CMD] setKd=100.0\r\n`
     - Control:
-        - `[CMD] start`
-        - `[CMD] stop`
-        - `[CMD] reset`
+        - `[CMD] start\r\n`
+        - `[CMD] stop\r\n`
+        - `[CMD] reset\r\n`
     - Housekeeping control:
-        - `[CMD] disableHK`
-        - `[CMD] enableHK`
-        - `[CMD] setHKRate=10`  (sets housekeeping rate in Hz; limited by firmware)
+        - `[CMD] disableHK\r\n`
+        - `[CMD] enableHK\r\n`
+        - `[CMD] setHKRate=10\r\n`  (sets housekeeping rate in Hz; limited by firmware)
+    - General:
+        - `Ping\r\n` gets acknowledged with `Pong`
+        - `[CMD] enter bootloader\r\n` reboots the device into the bootloader for reflashing.
 
 - Acknowledgements and housekeeping are printed back over USB, prefixed with `[ACK]` and `[HK]`.
 
